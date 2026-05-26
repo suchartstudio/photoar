@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Photo Booth Kiosk</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <style>
+        body {
+            margin: 0; padding: 0;
+            width: 1080px; height: 1920px;
+            background-color: #121212; color: #ffffff;
+            font-family: 'Chakra Petch', sans-serif;
+            display: flex; flex-direction: column; align-items: center;
+            overflow: hidden; position: relative;
+        }
+
+        .header { margin-top: 60px; text-align: center; }
+        .header h1 { font-size: 80px; margin: 0; font-weight: 700; color: #00E5FF; }
+        .header p { font-size: 36px; margin: 10px 0 0 0; color: #aaaaaa; }
+
+        .camera-container {
+            position: relative; width: 960px; height: 1280px;
+            margin-top: 50px; background-color: #000000;
+            border-radius: 30px; overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        #webcam { 
+            width: 100%; height: 100%; object-fit: cover; 
+            transform: scaleX(-1) translateZ(0); 
+            will-change: transform;
+        }
+
+        #output_canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 5; pointer-events: none; 
+            transform: scaleX(-1); 
+            object-fit: cover; 
+        }
+        
+        #frame-overlay { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            pointer-events: none; z-index: 10;
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        #capture-countdown {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: none; justify-content: center; align-items: center;
+            font-size: 400px; font-weight: 700; color: white;
+            text-shadow: 0 10px 50px rgba(0,0,0,0.8); z-index: 20;
+        }
+
+        .instruction-panel {
+            display: flex; justify-content: center; align-items: center; gap: 60px;
+            width: 960px; margin-top: 60px;
+            background-color: #222222; border-radius: 20px; padding: 40px 0;
+            border: 2px solid #333333;
+        }
+        .instruction-item { text-align: center; font-size: 38px; }
+        .icon { font-size: 64px; margin-bottom: 10px; display: block; }
+
+        #canvas { display: none; }
+
+        #result-screen {
+            display: none; position: absolute; top: 0; left: 0; 
+            width: 1080px; height: 1920px; background-color: rgba(18, 18, 18, 0.98); 
+            z-index: 100; flex-direction: column; align-items: center; justify-content: center;
+        }
+        
+        #ai-status {
+            position: absolute; top: 20px; right: 20px;
+            background-color: #FF3D00; color: white; padding: 10px 20px;
+            border-radius: 10px; font-size: 24px; z-index: 50;
+        }
+
+        /* ปุ่มบังคับเริ่มเสียงเพลงตอนเปิดเครื่อง */
+        #audio-start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.8); z-index: 200;
+            display: flex; justify-content: center; align-items: center; flex-direction: column;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <audio id="bg-music" src="music.mp3" loop></audio>
+
+    <div id="audio-start-overlay">
+        <h1 style="font-size: 80px; color: #00E5FF;">แตะหน้าจอ 1 ครั้ง</h1>
+        <p style="font-size: 40px; color: white;">เพื่อเปิดระบบและเสียงเพลงประกอบ</p>
+    </div>
+
+    <div id="ai-status">⏳ กำลังโหลดระบบ...</div>
+
+    <div class="header">
+        <h1>SNAPSHOT STUDIO</h1>
+        <p>ระบบตรวจจับท่าทางอัตโนมัติ (Touchless Kiosk)</p>
+    </div>
+
+    <div class="camera-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output_canvas"></canvas>
+        <img id="frame-overlay" src="" alt="Frame Overlay">
+        <div id="capture-countdown">5</div>
+    </div>
+
+    <div class="instruction-panel">
+        <div class="instruction-item">
+            <span class="icon">👋</span>
+            ปัดซ้าย / ขวา<br><span style="color: #aaaaaa; font-size: 28px;">เพื่อเปลี่ยนกรอบรูป</span>
+        </div>
+        <div class="instruction-item">
+            <span class="icon">✌️</span>
+            ชู 2 นิ้ว ค้างไว้<br><span style="color: #00E5FF; font-size: 28px;">เพื่อเริ่มนับถอยหลังถ่ายภาพ</span>
+        </div>
+    </div>
+
+    <canvas id="canvas" width="960" height="1280"></canvas>
+
+    <div id="result-screen">
+        <h2 style="font-size: 64px; color: #00E5FF; margin-bottom: 30px; font-weight: 700;">สแกนเพื่อดาวน์โหลดภาพ!</h2>
+        <img id="final-image" style="width: 540px; height: 720px; object-fit: cover; border-radius: 20px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); margin-bottom: 50px;">
+        <div id="qrcode-container" style="background: white; padding: 30px; border-radius: 20px; display: flex; align-items: center; justify-content: center; min-width: 300px; min-height: 300px;"></div>
+        <p style="font-size: 36px; margin-top: 40px; color: #aaaaaa;">ระบบจะกลับสู่หน้าหลักใน <span id="countdown-text" style="color: #FF3D00; font-weight: bold;">15</span> วินาที</p>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
+        import { GestureRecognizer, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDMptdLpLEdbeVFKZj82M0gyoV2m_2y5Pk",
+            authDomain: "suchartstudio-9a78d.firebaseapp.com",
+            databaseURL: "https://suchartstudio-9a78d-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "suchartstudio-9a78d",
+            storageBucket: "suchartstudio-9a78d.firebasestorage.app",
+            messagingSenderId: "953369646185",
+            appId: "1:953369646185:web:99057e30888de3566ebef8"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const storage = getStorage(app);
+
+        // --- 1. ระบบจัดการเสียงเพลง ---
+        const bgMusic = document.getElementById('bg-music');
+        bgMusic.volume = 0.5; // ปรับความดัง 50%
+        document.getElementById('audio-start-overlay').addEventListener('click', function() {
+            bgMusic.play().catch(e => console.log("ไม่สามารถเล่นเสียงได้:", e));
+            this.style.display = 'none'; // ซ่อนหน้าแตะเมื่อคลิกแล้ว
+        });
+
+        // --- 2. ระบบดึงไฟล์กรอบรูป 1-10 แบบอัตโนมัติ ---
+        const video = document.getElementById('webcam');
+        let frames = []; 
+        let currentFrameIndex = 0;
+        const frameOverlay = document.getElementById('frame-overlay');
+        
+        async function preloadFrames() {
+            const maxFrames = 10;
+            const validFrames = [];
+            
+            // เช็คว่ามีไฟล์ frame1 ถึง frame10 อยู่จริงไหม
+            for (let i = 1; i <= maxFrames; i++) {
+                const imgName = `frame${i}.png`;
+                const exists = await new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => resolve(true);
+                    img.onerror = () => resolve(false);
+                    img.src = imgName;
+                });
+                
+                if (exists) validFrames.push(imgName);
+            }
+
+            if (validFrames.length > 0) {
+                frames = validFrames;
+                frameOverlay.src = frames[0];
+                console.log("กรอบรูปที่ใช้งานได้:", frames);
+            } else {
+                console.error("ไม่พบไฟล์กรอบรูปเลย!");
+                frames = ['frame1.png']; // Fallback
+            }
+        }
+
+        // --- ตัวแปร AI และ State ---
+        const outputCanvas = document.getElementById('output_canvas');
+        const canvasCtx = outputCanvas.getContext('2d');
+        let drawingUtils;
+        
+        let gestureRecognizer;
+        let isCountingDown = false;
+        let lastVideoTime = -1;
+        let handPositionState = "center"; 
+        let gestureCooldown = 0;
+        let isPredicting = false; 
+
+        // Auto Slide
+        let autoSlideTimer;
+        let userIdleTimer;
+        const AUTO_SLIDE_INTERVAL = 6000; 
+        const IDLE_TIMEOUT = 10000;       
+
+        function startAutoSlide() {
+            clearInterval(autoSlideTimer);
+            autoSlideTimer = setInterval(() => {
+                if (!isCountingDown && document.getElementById('result-screen').style.display !== 'flex') {
+                    changeFrame(1);
+                }
+            }, AUTO_SLIDE_INTERVAL);
+        }
+
+        function stopAutoSlide() {
+            clearInterval(autoSlideTimer);
+        }
+
+        function handleUserPresence() {
+            stopAutoSlide(); 
+            clearTimeout(userIdleTimer);
+            userIdleTimer = setTimeout(() => {
+                startAutoSlide();
+            }, IDLE_TIMEOUT);
+        }
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 1080 }, height: { ideal: 1920 }, facingMode: "user", frameRate: { ideal: 30, max: 60 } }
+                });
+                video.srcObject = stream;
+                
+                video.addEventListener('loadeddata', () => {
+                    outputCanvas.width = video.videoWidth;
+                    outputCanvas.height = video.videoHeight;
+                });
+
+            } catch (err) {
+                console.error("ไม่สามารถเปิดกล้องได้: ", err);
+            }
+        }
+
+        async function createGestureRecognizer() {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+            gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+                    delegate: "GPU" 
+                },
+                runningMode: "VIDEO",
+                numHands: 1 
+            });
+            
+            drawingUtils = new DrawingUtils(canvasCtx);
+            
+            document.getElementById('ai-status').innerText = "🟢 พร้อมใช้งานแล้ว";
+            setTimeout(() => { document.getElementById('ai-status').style.display = 'none'; }, 2000);
+            
+            predictWebcam();
+        }
+
+        function predictWebcam() {
+            if (!gestureRecognizer) {
+                requestAnimationFrame(predictWebcam);
+                return;
+            }
+            if (video.currentTime !== lastVideoTime && !isPredicting) {
+                isPredicting = true;
+                lastVideoTime = video.currentTime;
+                
+                let startTimeMs = performance.now();
+                const results = gestureRecognizer.recognizeForVideo(video, startTimeMs);
+                
+                canvasCtx.save();
+                canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+                
+                if (document.getElementById('result-screen').style.display !== 'flex') {
+                    if (results.landmarks && results.landmarks.length > 0) {
+                        
+                        handleUserPresence(); 
+
+                        for (const landmarks of results.landmarks) {
+                            drawingUtils.drawConnectors(landmarks, GestureRecognizer.HAND_CONNECTIONS, {
+                                color: "#00E5FF", lineWidth: 6
+                            });
+                            drawingUtils.drawLandmarks(landmarks, {
+                                color: "#FF3D00", lineWidth: 4, radius: 5
+                            });
+                        }
+                    }
+                }
+                canvasCtx.restore();
+
+                processGestures(results);
+                
+                isPredicting = false;
+            }
+            requestAnimationFrame(predictWebcam);
+        }
+
+        function processGestures(results) {
+            const resultScreen = document.getElementById('result-screen');
+            if (isCountingDown || resultScreen.style.display === 'flex') return;
+
+            if (results.landmarks.length > 0) {
+                const hand = results.landmarks[0];
+                const x = hand[0].x; 
+                
+                if (Date.now() > gestureCooldown) {
+                    
+                    const LEFT_ZONE = 0.35;   
+                    const RIGHT_ZONE = 0.65;  
+                    const CENTER_MIN = 0.45;  
+                    const CENTER_MAX = 0.55;
+
+                    if (x < LEFT_ZONE) { 
+                        if (handPositionState === "right" || handPositionState === "center") {
+                            changeFrame(-1); 
+                            gestureCooldown = Date.now() + 1500; 
+                        }
+                        handPositionState = "left";
+                    } else if (x > RIGHT_ZONE) {
+                        if (handPositionState === "left" || handPositionState === "center") {
+                            changeFrame(1);
+                            gestureCooldown = Date.now() + 1500;
+                        }
+                        handPositionState = "right";
+                    } else if (x > CENTER_MIN && x < CENTER_MAX) {
+                        handPositionState = "center"; 
+                    }
+
+                    if (results.gestures.length > 0) {
+                        const categoryName = results.gestures[0][0].categoryName;
+                        if (categoryName === "Victory") {
+                            startCaptureCountdown();
+                        }
+                    }
+                }
+            }
+        }
+
+        function changeFrame(direction) {
+            if (frames.length === 0) return; // กันพังถ้าไม่มีเฟรม
+
+            currentFrameIndex += direction;
+            if (currentFrameIndex < 0) currentFrameIndex = frames.length - 1;
+            if (currentFrameIndex >= frames.length) currentFrameIndex = 0;
+            
+            frameOverlay.style.opacity = 0;
+            setTimeout(() => {
+                frameOverlay.src = frames[currentFrameIndex];
+                frameOverlay.style.opacity = 1;
+            }, 300); 
+        }
+
+        function startCaptureCountdown() {
+            isCountingDown = true;
+            stopAutoSlide(); 
+            clearTimeout(userIdleTimer);
+            
+            let count = 5;
+            const countdownOverlay = document.getElementById('capture-countdown');
+            countdownOverlay.style.display = 'flex';
+            countdownOverlay.innerText = count;
+
+            const timer = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    countdownOverlay.innerText = count;
+                } else {
+                    clearInterval(timer);
+                    countdownOverlay.style.display = 'none';
+                    takePhoto(); 
+                }
+            }, 1000);
+        }
+
+        const captureCanvas = document.getElementById('canvas'); 
+        const captureCtx = captureCanvas.getContext('2d');
+        const resultScreen = document.getElementById('result-screen');
+        const finalImage = document.getElementById('final-image');
+        const qrcodeContainer = document.getElementById('qrcode-container');
+        let resetInterval;
+
+        function takePhoto() {
+            canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+            
+            document.body.style.backgroundColor = "#ffffff";
+            setTimeout(() => { document.body.style.backgroundColor = "#121212"; }, 100);
+
+            captureCtx.save();
+            captureCtx.translate(captureCanvas.width, 0);
+            captureCtx.scale(-1, 1);
+            captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+            captureCtx.restore();
+
+            const currentFrameImg = new Image();
+            currentFrameImg.src = frames[currentFrameIndex];
+            
+            currentFrameImg.onload = () => {
+                captureCtx.drawImage(currentFrameImg, 0, 0, captureCanvas.width, captureCanvas.height);
+                
+                finalImage.src = captureCanvas.toDataURL('image/png');
+                resultScreen.style.display = 'flex';
+                qrcodeContainer.innerHTML = '<h3 style="color: black; margin: 0;">กำลังอัปโหลด...</h3>';
+                
+                captureCanvas.toBlob(async (blob) => {
+                    try {
+                        const fileName = `photos/booth_${Date.now()}.png`;
+                        const storageRef = ref(storage, fileName);
+
+                        await uploadBytes(storageRef, blob);
+                        const downloadURL = await getDownloadURL(storageRef);
+                        
+                        qrcodeContainer.innerHTML = ''; 
+                        new QRCode(qrcodeContainer, {
+                            text: downloadURL,
+                            width: 300, height: 300,
+                            colorDark : "#000000", colorLight : "#ffffff",
+                            correctLevel : QRCode.CorrectLevel.H
+                        });
+
+                        startResetTimer(15);
+                    } catch (error) {
+                        console.error("อัปโหลดไม่สำเร็จ:", error);
+                        qrcodeContainer.innerHTML = '<h3 style="color: red;">เกิดข้อผิดพลาด</h3>';
+                        startResetTimer(5);
+                    }
+                }, 'image/png');
+            };
+        }
+
+        function startResetTimer(seconds) {
+            let timeLeft = seconds;
+            document.getElementById('countdown-text').innerText = timeLeft;
+            
+            resetInterval = setInterval(() => {
+                timeLeft--;
+                document.getElementById('countdown-text').innerText = timeLeft;
+                if (timeLeft <= 0) {
+                    clearInterval(resetInterval);
+                    resultScreen.style.display = 'none'; 
+                    qrcodeContainer.innerHTML = '';
+                    
+                    isCountingDown = false;
+                    handleUserPresence(); 
+                }
+            }, 1000);
+        }
+
+        // โหลดข้อมูลให้พร้อมก่อนเปิดกล้องและเริ่ม AI
+        preloadFrames().then(() => {
+            initCamera().then(() => {
+                createGestureRecognizer();
+                startAutoSlide(); 
+            });
+        });
+
+    </script>
+</body>
+</html>
