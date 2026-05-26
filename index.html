@@ -38,6 +38,7 @@
 </head>
 <body>
     
+    <!-- โหลดรูป Props ไว้ซ่อนๆ เพื่อให้ JS ดึงไปใช้ -->
     <img id="prop-glasses" src="glasses.png" style="display: none;">
     <img id="prop-hat" src="hat.png" style="display: none;">
 
@@ -71,6 +72,7 @@
         </div>
     </div>
 
+    <!-- Canvas สำหรับสร้างรูปภาพที่จะอัปโหลด -->
     <canvas id="canvas" width="960" height="1280"></canvas>
 
     <div id="result-screen">
@@ -148,6 +150,9 @@
         let handPositionState = "center"; 
         let gestureCooldown = 0;
         let isPredicting = false; 
+        
+        // ตัวแปรโหมด AR Props: 1 = แว่น, 2 = หมวก, 3 = แว่น+หมวก
+        let currentPropMode = 1; 
 
         // --- ระบบ Auto Slide & Idle Timer ---
         let autoSlideTimer;
@@ -192,7 +197,7 @@
                 baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, delegate: "GPU" },
                 outputFaceBlendshapes: false,
                 runningMode: "VIDEO",
-                numFaces: 5 // รองรับถ่ายรูปหมู่สูงสุด 5 คน
+                numFaces: 5 
             });
             
             drawingUtils = new DrawingUtils(canvasCtx);
@@ -202,9 +207,8 @@
             predictWebcam();
         }
 
-        // --- ฟังก์ชันคำนวณและวาด AR Props ---
-        // (เพิ่ม canvasW และ canvasH เพื่อความแม่นยำในการระบุตำแหน่ง)
-        function drawARProps(ctx, faceLandmarks, canvasW, canvasH) {
+        // --- ฟังก์ชันคำนวณและวาด AR Props (สุ่มโหมด) ---
+        function drawARProps(ctx, faceLandmarks, canvasW, canvasH, mode) {
             const leftEye = faceLandmarks[33]; 
             const rightEye = faceLandmarks[263];
             const forehead = faceLandmarks[10];
@@ -221,19 +225,30 @@
             
             ctx.save();
             
-            // วาดแว่นตา
-            const glassesWidth = faceWidth * 2.2; 
-            const glassesHeight = glassesWidth * (propGlasses.height / propGlasses.width);
-
-            ctx.translate(centerX, centerY);
-            ctx.rotate(angle);
-            ctx.drawImage(propGlasses, -glassesWidth / 2, -glassesHeight / 2, glassesWidth, glassesHeight);
+            // โหมด 1 และ 3 ให้วาดแว่นตา
+            if (mode === 1 || mode === 3) {
+                const glassesWidth = faceWidth * 2.2; 
+                const glassesHeight = glassesWidth * (propGlasses.height / propGlasses.width);
+                
+                ctx.save();
+                ctx.translate(centerX, centerY);
+                ctx.rotate(angle);
+                ctx.drawImage(propGlasses, -glassesWidth / 2, -glassesHeight / 2, glassesWidth, glassesHeight);
+                ctx.restore();
+            }
             
-            // หากต้องการใส่หมวกด้วย ให้เปิดคอมเมนต์บรรทัดด้านล่าง
-            // const hatWidth = faceWidth * 3.5;
-            // const hatHeight = hatWidth * (propHat.height / propHat.width);
-            // ctx.translate(0, -faceWidth * 1.5); 
-            // ctx.drawImage(propHat, -hatWidth / 2, -hatHeight / 2, hatWidth, hatHeight); 
+            // โหมด 2 และ 3 ให้วาดหมวก
+            if (mode === 2 || mode === 3) {
+                const hatWidth = faceWidth * 3.5;
+                const hatHeight = hatWidth * (propHat.height / propHat.width);
+                
+                ctx.save();
+                ctx.translate(centerX, centerY);
+                ctx.rotate(angle);
+                ctx.translate(0, -faceWidth * 1.5); // ดันหมวกขึ้นไปบนหน้าผาก
+                ctx.drawImage(propHat, -hatWidth / 2, -hatHeight / 2, hatWidth, hatHeight); 
+                ctx.restore();
+            }
             
             ctx.restore();
         }
@@ -256,7 +271,6 @@
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
                 
-                // ถ้านับถอยหลัง หรือไม่ได้แสดงหน้าผลลัพธ์ ให้ทำงานตามปกติ
                 if (document.getElementById('result-screen').style.display !== 'flex') {
                     
                     if ((gestureResults.landmarks && gestureResults.landmarks.length > 0) || 
@@ -272,10 +286,10 @@
                         }
                     }
 
-                    // วาดแว่นตาบนหน้าจอ Live Preview
+                    // วาด AR Props บนหน้าจอ Live Preview (ใช้โหมดที่ถูกสุ่ม)
                     if (faceResults.faceLandmarks) {
                         for (const faceLandmarks of faceResults.faceLandmarks) {
-                            drawARProps(canvasCtx, faceLandmarks, outputCanvas.width, outputCanvas.height);
+                            drawARProps(canvasCtx, faceLandmarks, outputCanvas.width, outputCanvas.height, currentPropMode);
                         }
                     }
                 }
@@ -310,12 +324,15 @@
             }
         }
 
-        // --- เปลี่ยนกรอบรูป ---
+        // --- เปลี่ยนกรอบรูป & สุ่ม Props ---
         function changeFrame(direction) {
             if (frames.length === 0) return;
             currentFrameIndex += direction;
             if (currentFrameIndex < 0) currentFrameIndex = frames.length - 1;
             if (currentFrameIndex >= frames.length) currentFrameIndex = 0;
+            
+            // สุ่มโหมด Props ใหม่ (1 = แว่น, 2 = หมวก, 3 = แว่น+หมวก)
+            currentPropMode = Math.floor(Math.random() * 3) + 1;
             
             frameOverlay.style.opacity = 0;
             setTimeout(() => { frameOverlay.src = frames[currentFrameIndex]; frameOverlay.style.opacity = 1; }, 300); 
@@ -346,29 +363,27 @@
 
         // --- 📸 ถ่ายรูปและประมวลผลเลเยอร์ ---
         async function takePhoto() {
-            // เคลียร์ Canvas ของหน้าจอ Live ออกเพื่อไม่ให้กวนสายตาตอนรออัปโหลด
             canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
             document.body.style.backgroundColor = "#ffffff";
             setTimeout(() => { document.body.style.backgroundColor = "#121212"; }, 100);
 
-            // 1. วาดภาพกล้องลง Canvas ลับ (กลับด้านภาพให้เหมือนกระจก)
+            // 1. วาดภาพกล้องลง Canvas ลับ
             captureCtx.save();
             captureCtx.translate(captureCanvas.width, 0);
             captureCtx.scale(-1, 1);
             captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
             
-            // 2. ให้ AI จับใบหน้าจากภาพนิ่งนี้อีกครั้ง แล้ววาด AR Props ในขณะที่ภาพยังถูกกลับด้านอยู่!
+            // 2. ให้ AI จับใบหน้าแล้ววาด AR Props ทับลงในภาพถ่าย
             const faceResults = faceLandmarker.detectForVideo(video, performance.now());
             if (faceResults.faceLandmarks) {
                 for (const faceLandmarks of faceResults.faceLandmarks) {
-                    drawARProps(captureCtx, faceLandmarks, captureCanvas.width, captureCanvas.height); 
+                    drawARProps(captureCtx, faceLandmarks, captureCanvas.width, captureCanvas.height, currentPropMode); 
                 }
             }
 
-            // 3. ปลดล็อคการกลับด้าน (เพื่อให้กรอบรูปและตัวหนังสือไม่กลับหัว)
             captureCtx.restore();
 
-            // 4. โหลดและวาดกรอบรูปทับลงไป
+            // 3. โหลดและวาดกรอบรูปทับ
             const currentFrameImg = new Image();
             if (frames.length > 0) {
                 currentFrameImg.src = frames[currentFrameIndex];
@@ -384,12 +399,10 @@
                 captureCtx.drawImage(frameImage, 0, 0, captureCanvas.width, captureCanvas.height);
             }
             
-            // นำภาพจาก Canvas มาโชว์ให้ User ดูเป็น Preview
             finalImage.src = captureCanvas.toDataURL('image/png');
             resultScreen.style.display = 'flex';
             qrcodeContainer.innerHTML = '<h3 style="color: black; margin: 0;">กำลังอัปโหลด...</h3>';
             
-            // แปลง Canvas เป็นไฟล์แล้วส่งขึ้นคลาวด์
             captureCanvas.toBlob(async (blob) => {
                 try {
                     const fileName = `photos/booth_${Date.now()}.png`;
