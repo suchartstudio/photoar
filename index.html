@@ -42,7 +42,7 @@
 
     <div id="audio-start-overlay">
         <h1 style="font-size: 80px; color: #00E5FF;">แตะหน้าจอ 1 ครั้ง</h1>
-        <p style="font-size: 40px; color: white;">เพื่อเปิดระบบ</p>
+        <p style="font-size: 40px; color: white;">เพื่อเปิดระบบภาพและเสียง</p>
     </div>
 
     <div id="ai-status">⏳ กำลังโหลดระบบ AI 2 ตัว...</div>
@@ -80,10 +80,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
-        
-        // --- 1. เพิ่มการโหลด FaceLandmarker มาด้วย ---
         import { GestureRecognizer, FaceLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs";
 
+        // ตั้งค่า Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyDMptdLpLEdbeVFKZj82M0gyoV2m_2y5Pk",
             authDomain: "suchartstudio-9a78d.firebaseapp.com",
@@ -96,10 +95,11 @@
         const app = initializeApp(firebaseConfig);
         const storage = getStorage(app);
 
+        // จัดการเสียงเพลง
         const bgMusic = document.getElementById('bg-music');
         bgMusic.volume = 0.5;
         document.getElementById('audio-start-overlay').addEventListener('click', function() {
-            bgMusic.play().catch(e => console.log(e));
+            bgMusic.play().catch(e => console.log("รอการโต้ตอบจากผู้ใช้:", e));
             this.style.display = 'none';
         });
 
@@ -108,6 +108,7 @@
         let currentFrameIndex = 0;
         const frameOverlay = document.getElementById('frame-overlay');
         
+        // เช็คกรอบรูป 1-10 แบบอัตโนมัติ (แก้ไขปัญหา 404 โดยข้ามไฟล์ที่ไม่มี)
         async function preloadFrames() {
             const validFrames = [];
             for (let i = 1; i <= 10; i++) {
@@ -124,7 +125,7 @@
                 frames = validFrames;
                 frameOverlay.src = frames[0];
             } else {
-                frames = ['frame1.png'];
+                console.warn("ไม่พบไฟล์เฟรม กรุณาอัปโหลด frame1.png ถึง frame10.png");
             }
         }
 
@@ -132,11 +133,9 @@
         const canvasCtx = outputCanvas.getContext('2d');
         let drawingUtils;
         
-        // ตัวแปร AI ทั้ง 2 ตัว
         let gestureRecognizer;
         let faceLandmarker; 
 
-        // โหลดรูป Props มาเก็บไว้ในตัวแปร
         const propGlasses = document.getElementById('prop-glasses');
         const propHat = document.getElementById('prop-hat');
 
@@ -146,6 +145,7 @@
         let gestureCooldown = 0;
         let isPredicting = false; 
 
+        // ตัวจับเวลา Auto Slide
         let autoSlideTimer;
         let userIdleTimer;
         const AUTO_SLIDE_INTERVAL = 6000; 
@@ -163,6 +163,7 @@
             userIdleTimer = setTimeout(startAutoSlide, IDLE_TIMEOUT);
         }
 
+        // เปิดกล้อง
         async function initCamera() {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { width: { ideal: 1080 }, height: { ideal: 1920 }, facingMode: "user", frameRate: { ideal: 30, max: 60 } }
@@ -174,17 +175,15 @@
             });
         }
 
-        // --- 2. โหลด Model AI ทั้งมือ และ ใบหน้า ---
+        // โหลดโมเดล AI
         async function createAIModels() {
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
             
-            // โหลด AI มือ
             gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
                 baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task", delegate: "GPU" },
                 runningMode: "VIDEO", numHands: 1 
             });
 
-            // โหลด AI ใบหน้า (ตั้งค่ารองรับ 5 คน สำหรับถ่ายรูปหมู่)
             faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
                 baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, delegate: "GPU" },
                 outputFaceBlendshapes: false,
@@ -199,56 +198,42 @@
             predictWebcam();
         }
 
-        // --- 3. ฟังก์ชันคำนวณและวาด AR Props ---
+        // ฟังก์ชันวาด AR Props (แว่นตา / หมวก)
         function drawARProps(ctx, faceLandmarks) {
-            // จุดอ้างอิงของ MediaPipe Face (Index)
-            // 33: หางตาซ้าย (บนหน้าคน), 263: หางตาขวา, 10: หน้าผากส่วนบน
             const leftEye = faceLandmarks[33]; 
             const rightEye = faceLandmarks[263];
             const forehead = faceLandmarks[10];
 
-            // คำนวณพิกัดจริงบน Canvas
             const x1 = leftEye.x * outputCanvas.width;
             const y1 = leftEye.y * outputCanvas.height;
             const x2 = rightEye.x * outputCanvas.width;
             const y2 = rightEye.y * outputCanvas.height;
 
-            // 1. หาจุดกึ่งกลางระหว่างตาสองข้าง
             const centerX = (x1 + x2) / 2;
             const centerY = (y1 + y2) / 2;
-
-            // 2. หาความเอียงของใบหน้า (องศา)
             const angle = Math.atan2(y2 - y1, x2 - x1);
-
-            // 3. หาขนาดของหน้า (วัดจากระยะห่างตาสองข้าง)
             const faceWidth = Math.hypot(x2 - x1, y2 - y1);
             
             ctx.save();
-            // --- วาดแว่นตา ---
-            // ให้แว่นกว้างกว่าระยะห่างตาประมาณ 2.2 เท่า (ปรับตัวเลขได้ตามไฟล์รูปแว่น)
+            
+            // วาดแว่นตา
             const glassesWidth = faceWidth * 2.2; 
             const glassesHeight = glassesWidth * (propGlasses.height / propGlasses.width);
 
             ctx.translate(centerX, centerY);
             ctx.rotate(angle);
-            // วาดรูปโดยให้จุดกึ่งกลางรูปอยู่ที่กึ่งกลางตา
             ctx.drawImage(propGlasses, -glassesWidth / 2, -glassesHeight / 2, glassesWidth, glassesHeight);
             
-            // --- วาดหมวก (ถ้ามีไฟล์) ---
-            const fx = forehead.x * outputCanvas.width;
-            const fy = forehead.y * outputCanvas.height;
-            
-            // ยกหมวกขึ้นไปเหนือหน้าผาก
-            const hatWidth = faceWidth * 3.5; // หมวกต้องใบใหญ่กว่าแว่น
-            const hatHeight = hatWidth * (propHat.height / propHat.width);
-            
-            // ปรับระยะให้หมวกไม่บังตา (เลื่อนแกน Y ขึ้น)
-            ctx.translate(0, -faceWidth * 1.5); 
-            // ctx.drawImage(propHat, -hatWidth / 2, -hatHeight / 2, hatWidth, hatHeight); // เปิดบรรทัดนี้ถ้าจะใส่หมวก
+            // --- ถ้าอยากให้ใส่หมวกด้วย ให้เอาคอมเมนต์ 2 บรรทัดด้านล่างนี้ออก ---
+            // const hatWidth = faceWidth * 3.5;
+            // const hatHeight = hatWidth * (propHat.height / propHat.width);
+            // ctx.translate(0, -faceWidth * 1.5); 
+            // ctx.drawImage(propHat, -hatWidth / 2, -hatHeight / 2, hatWidth, hatHeight); 
             
             ctx.restore();
         }
 
+        // ตรวจจับท่าทางแบบ Real-time
         function predictWebcam() {
             if (!gestureRecognizer || !faceLandmarker) {
                 requestAnimationFrame(predictWebcam);
@@ -260,23 +245,20 @@
                 
                 let startTimeMs = performance.now();
                 
-                // สั่งรัน AI ทั้ง 2 ตัว
                 const gestureResults = gestureRecognizer.recognizeForVideo(video, startTimeMs);
-                const faceResults = faceLandmarker.recognizeForVideo(video, startTimeMs);
+                // แก้ไขแล้ว: เปลี่ยนเป็น detectForVideo
+                const faceResults = faceLandmarker.detectForVideo(video, startTimeMs);
                 
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
                 
-                // --- ระบบประมวลผลวาดของลงจอ (แสดงตลอด ยกเว้นตอนได้ผลลัพธ์) ---
                 if (document.getElementById('result-screen').style.display !== 'flex') {
                     
-                    // 1. ถ้าเจอคน (หน้า หรือ มือ) ให้หยุดเลื่อนรูปอัตโนมัติ
                     if ((gestureResults.landmarks && gestureResults.landmarks.length > 0) || 
                         (faceResults.faceLandmarks && faceResults.faceLandmarks.length > 0)) {
                         handleUserPresence(); 
                     }
 
-                    // 2. วาดเส้นมือ (ถ้าเจอ)
                     if (gestureResults.landmarks) {
                         for (const landmarks of gestureResults.landmarks) {
                             drawingUtils.drawConnectors(landmarks, GestureRecognizer.HAND_CONNECTIONS, { color: "#00E5FF", lineWidth: 6 });
@@ -284,7 +266,6 @@
                         }
                     }
 
-                    // 3. ตรวจจับหน้ากี่คน ก็วาด AR Props ให้ครบทุกคน (รองรับรูปหมู่)
                     if (faceResults.faceLandmarks) {
                         for (const faceLandmarks of faceResults.faceLandmarks) {
                             drawARProps(canvasCtx, faceLandmarks);
@@ -299,6 +280,7 @@
             requestAnimationFrame(predictWebcam);
         }
 
+        // ประมวลผลการปัดมือและชู 2 นิ้ว
         function processGestures(results) {
             const resultScreen = document.getElementById('result-screen');
             if (isCountingDown || resultScreen.style.display === 'flex') return;
@@ -353,54 +335,61 @@
         const finalImage = document.getElementById('final-image');
         const qrcodeContainer = document.getElementById('qrcode-container');
 
+        // ฟังก์ชันถ่ายรูปและอัปโหลด
         async function takePhoto() {
-            // ล้างเส้นมือบนจอทิ้ง แต่เดี๋ยวเราจะเอาแว่นตาวาดใส่ในภาพที่ถ่ายด้วย!
             canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
             document.body.style.backgroundColor = "#ffffff";
             setTimeout(() => { document.body.style.backgroundColor = "#121212"; }, 100);
 
-            // 1. วาดรูปกล้องเปล่าๆ
             captureCtx.save();
             captureCtx.translate(captureCanvas.width, 0);
             captureCtx.scale(-1, 1);
             captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
             captureCtx.restore();
 
-            // 2. ให้ AI จับหน้าอีกครั้งจากภาพนิ่งล่าสุด เพื่อวาด AR Props ยัดลงไปในรูปที่จะ Save 
-            const faceResults = faceLandmarker.recognizeForVideo(video, performance.now());
+            // แก้ไขแล้ว: เปลี่ยนเป็น detectForVideo
+            const faceResults = faceLandmarker.detectForVideo(video, performance.now());
             if (faceResults.faceLandmarks) {
                 for (const faceLandmarks of faceResults.faceLandmarks) {
-                    drawARProps(captureCtx, faceLandmarks); // เรียกใช้ฟังก์ชันเดิม แต่วาดลง captureCtx แทน
+                    drawARProps(captureCtx, faceLandmarks); 
                 }
             }
 
-            // 3. วาดกรอบรูปทับเป็นเลเยอร์สุดท้าย
             const currentFrameImg = new Image();
-            currentFrameImg.src = frames[currentFrameIndex];
-            currentFrameImg.onload = () => {
-                captureCtx.drawImage(currentFrameImg, 0, 0, captureCanvas.width, captureCanvas.height);
-                
-                finalImage.src = captureCanvas.toDataURL('image/png');
-                resultScreen.style.display = 'flex';
-                qrcodeContainer.innerHTML = '<h3 style="color: black; margin: 0;">กำลังอัปโหลด...</h3>';
-                
-                captureCanvas.toBlob(async (blob) => {
-                    try {
-                        const fileName = `photos/booth_${Date.now()}.png`;
-                        const storageRef = ref(storage, fileName);
-                        await uploadBytes(storageRef, blob);
-                        const downloadURL = await getDownloadURL(storageRef);
-                        
-                        qrcodeContainer.innerHTML = ''; 
-                        new QRCode(qrcodeContainer, { text: downloadURL, width: 300, height: 300, colorDark : "#000000", colorLight : "#ffffff", correctLevel : QRCode.CorrectLevel.H });
+            // ตรวจสอบว่ามีเฟรมให้วาดทับหรือไม่
+            if (frames.length > 0) {
+                currentFrameImg.src = frames[currentFrameIndex];
+                currentFrameImg.onload = () => processUploadAndQR(currentFrameImg);
+            } else {
+                processUploadAndQR(null); // ถ่ายโดยไม่มีกรอบ
+            }
+        }
 
-                        startResetTimer(15);
-                    } catch (error) {
-                        qrcodeContainer.innerHTML = '<h3 style="color: red;">เกิดข้อผิดพลาด</h3>';
-                        startResetTimer(5);
-                    }
-                }, 'image/png');
-            };
+        function processUploadAndQR(frameImage) {
+            if (frameImage) {
+                captureCtx.drawImage(frameImage, 0, 0, captureCanvas.width, captureCanvas.height);
+            }
+            
+            finalImage.src = captureCanvas.toDataURL('image/png');
+            resultScreen.style.display = 'flex';
+            qrcodeContainer.innerHTML = '<h3 style="color: black; margin: 0;">กำลังอัปโหลด...</h3>';
+            
+            captureCanvas.toBlob(async (blob) => {
+                try {
+                    const fileName = `photos/booth_${Date.now()}.png`;
+                    const storageRef = ref(storage, fileName);
+                    await uploadBytes(storageRef, blob);
+                    const downloadURL = await getDownloadURL(storageRef);
+                    
+                    qrcodeContainer.innerHTML = ''; 
+                    new QRCode(qrcodeContainer, { text: downloadURL, width: 300, height: 300, colorDark : "#000000", colorLight : "#ffffff", correctLevel : QRCode.CorrectLevel.H });
+
+                    startResetTimer(15);
+                } catch (error) {
+                    qrcodeContainer.innerHTML = '<h3 style="color: red;">เกิดข้อผิดพลาด</h3>';
+                    startResetTimer(5);
+                }
+            }, 'image/png');
         }
 
         function startResetTimer(seconds) {
@@ -417,9 +406,10 @@
             }, 1000);
         }
 
+        // เริ่มต้นการทำงาน
         preloadFrames().then(() => {
             initCamera().then(() => {
-                createAIModels(); // สั่งรัน AI ทั้งหน้าและมือ
+                createAIModels(); 
                 startAutoSlide(); 
             });
         });
